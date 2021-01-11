@@ -2,7 +2,13 @@ use std::fs;
 use std::process;
 use std::path::Path;
 use std::io;
+use std::sync::mpsc;
+use std::thread;
 use clap::{Arg, App};
+// use std::sync::atomic::{AtomicUsize, Ordering};
+// use std::time::Duration;
+
+// static GLOBAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 fn main() {
     let matches = App::new("Hunter")
@@ -39,8 +45,22 @@ fn main() {
     }
 
     let mut all_files: Vec<String> = [].to_vec();
-    walk_dir(Path::new(&path), &query, &mut all_files);
+    let (tx, rx) = mpsc::channel();
+
+    walk_dir(Path::new(&path), query, tx);
+
+
+
+    // while GLOBAL_THREAD_COUNT.load(Ordering::SeqCst) != 0 {
+    //     thread::sleep(Duration::from_millis(1)); 
+    // }
+
+    for recv in rx {
+        all_files.push(recv);
+    }
+
     println!("All files: {:#?}", all_files);
+
 
     if delt {
         println!("A total of {} files will be deleted. Proceed? y/n", all_files.len());
@@ -61,7 +81,8 @@ fn main() {
     }
 }
 
-fn walk_dir(dir: &Path, query: &String, all_files: &mut Vec<String>) {
+fn walk_dir(dir: &Path, query: String, tx: mpsc::Sender<std::string::String>) {
+    // GLOBAL_THREAD_COUNT.fetch_add(1, Ordering::SeqCst);
     let files = fs::read_dir(dir).unwrap_or_else(|err| {
         println!("Error reading dir");
         println!("{}", err);
@@ -72,11 +93,16 @@ fn walk_dir(dir: &Path, query: &String, all_files: &mut Vec<String>) {
         let file = file.unwrap();
         if file.path().is_dir(){
             let s = String::from(file.path().to_string_lossy());
-            if s.ends_with(query){
-                all_files.push(s)
+            if s.ends_with(&query){
+                tx.send(s).unwrap();
             }else {
-                walk_dir(&file.path(), query, all_files);
+                let tx =  mpsc::Sender::clone(&tx);
+                let q = query.clone();
+                thread::spawn(move || {
+                    walk_dir(&file.path(), q, tx);
+                });
             }
         }
     }
+    // GLOBAL_THREAD_COUNT.fetch_sub(1, Ordering::SeqCst);
 }
